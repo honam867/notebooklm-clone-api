@@ -17,9 +17,9 @@ LLM_BINDING_API_KEY = os.getenv("LLM_BINDING_API_KEY")
 LLM_BINDING_HOST = os.getenv("LLM_BINDING_HOST")
 
 LIGHTRAG_GRAPH_STORAGE = os.getenv("LIGHTRAG_GRAPH_STORAGE")
-# LIGHTRAG_KV_STORAGE=os.getenv("LIGHTRAG_KV_STORAGE")
-# LIGHTRAG_VECTOR_STORAGE=os.getenv("LIGHTRAG_VECTOR_STORAGE")
-# LIGHTRAG_DOC_STATUS_STORAGE=os.getenv("LIGHTRAG_DOC_STATUS_STORAGE")
+LIGHTRAG_KV_STORAGE = os.getenv("LIGHTRAG_KV_STORAGE")
+LIGHTRAG_VECTOR_STORAGE = os.getenv("LIGHTRAG_VECTOR_STORAGE")
+LIGHTRAG_DOC_STATUS_STORAGE = os.getenv("LIGHTRAG_DOC_STATUS_STORAGE")
 
 
 def create_embedding_func():
@@ -69,18 +69,17 @@ async def build_lightrag(workspace_dir: str, workspace_id: str) -> LightRAG:
     Returns:
         Configured LightRAG instance with external storage
     """
-    # Create LightRAG instance with basic configuration
-    # Storage configuration is handled via environment variables
     rag = LightRAG(
         working_dir=workspace_dir,
         workspace=workspace_id,
         llm_model_func=create_llm_model_func(),
         embedding_func=create_embedding_func(),
         graph_storage=LIGHTRAG_GRAPH_STORAGE,
-        # vector_storage=LIGHTRAG_VECTOR_STORAGE,
-        # doc_status_storage=LIGHTRAG_DOC_STATUS_STORAGE,
+        kv_storage=LIGHTRAG_KV_STORAGE,
+        vector_storage=LIGHTRAG_VECTOR_STORAGE,
+        doc_status_storage=LIGHTRAG_DOC_STATUS_STORAGE,
     )
-    # Initialize storages (LightRAG will read storage config from environment variables)
+
     await rag.initialize_storages()
     await initialize_pipeline_status()
     print(f"✨ LightRAG instance built successfully for workspace: {workspace_id}")
@@ -100,15 +99,15 @@ def validate_external_storage_config() -> list[str]:
         "NEO4J_URI",
         "NEO4J_USERNAME",
         "NEO4J_PASSWORD",
-        "POSTGRES_URI",
+        "POSTGRES_HOST",
+        "POSTGRES_PORT",
+        "POSTGRES_USER",
+        "POSTGRES_PASSWORD",
+        "POSTGRES_DATABASE",
     ]
 
     for var in required_vars:
         if not os.getenv(var):
             missing.append(var)
-
-    # Chroma requires either HOST or DIR
-    # if not os.getenv("CHROMA_HOST") and not os.getenv("CHROMA_DIR"):
-    #     missing.append("CHROMA_HOST or CHROMA_DIR")
 
     return missing

@@ -52,28 +52,73 @@ NEO4J_URI=bolt://localhost:7687
 NEO4J_USERNAME=neo4j
 NEO4J_PASSWORD=your_neo4j_password
 
-# External Storage - ChromaDB
-CHROMA_HOST=localhost
-CHROMA_PORT=8000
-
 # External Storage - PostgreSQL (Supabase)
-POSTGRES_URI=postgresql://user:password@localhost:5432/dbname
+POSTGRES_HOST=your_project_host
+POSTGRES_PORT=5432
+POSTGRES_USER=postgres.your_project_ref
+POSTGRES_PASSWORD='your_database_password'
+POSTGRES_DATABASE=postgres
+POSTGRES_MAX_CONNECTIONS=12
 
 # Application Settings
 WORKSPACES_DIR=./workspaces
 PARSER=mineru
 ```
 
+#### 📋 Steps to Access Your Supabase Postgres Credentials
+
+1. **Open your Supabase project** in the [Supabase Dashboard](https://app.supabase.com/)
+
+2. **Locate and click the "Connect" button** — typically found at the top of the database overview or project page
+
+3. **In the connection modal**, look under **Connection Parameters** — you'll see fields for:
+
+   - **Host** (e.g., `db.abcdefghijklmnop.supabase.co`)
+   - **Port** (usually `5432`)
+   - **Database name** (usually `postgres` by default)
+   - **User** (format: `postgres.<project-ref>`)
+   - **Password** (your project database password set during creation)
+
+4. **Connection String Format**:
+
+   ```
+   postgres://postgres.<project-ref>:<PASSWORD>@<host-region>.pooler.supabase.com:5432/postgres
+   ```
+
+5. **Map to Environment Variables**:
+   ```env
+   POSTGRES_HOST=db.abcdefghijklmnop.supabase.co
+   POSTGRES_PORT=5432
+   POSTGRES_USER=postgres.your_project_ref
+   POSTGRES_PASSWORD='your_actual_database_password'
+   POSTGRES_DATABASE=postgres
+   POSTGRES_MAX_CONNECTIONS=12
+   ```
+
+> **💡 Note**: The `postgres` before the dot is the username (standard Supabase format), and `<PASSWORD>` is the actual database password you set during project creation. If you've forgotten it, you can reset it in the Supabase dashboard under Settings → Database.
+
 ### 3. Start External Services
 
+You'll need to set up your external services:
+
+**Option A: Use Supabase Cloud + Neo4j Cloud**
+
+- Create a [Supabase project](https://app.supabase.com/) (recommended)
+- Create a [Neo4j AuraDB instance](https://neo4j.com/cloud/aura/) or local Neo4j
+- Configure your `.env` file with the credentials
+
+**Option B: Local Neo4j with Docker**
+
 ```bash
-# Start ChromaDB with Docker
+# Start local Neo4j instance
 cd ops
-docker-compose up -d chroma
+docker-compose up -d neo4j
 
 # Or start all services including proxy
 docker-compose --profile proxy up -d
 ```
+
+> **💡 Recommended**: Use Supabase cloud for PostgreSQL as it provides managed vector extensions and better performance for RAG applications.
 
 ### 4. Run the Application
 
@@ -114,9 +159,9 @@ POST   /workspaces/{id}/chat          # Ask questions (with optional file upload
 
 ```http
 GET    /healthz/                      # Overall system health
-GET    /healthz/chroma                # ChromaDB status
+GET    /healthz/supabase              # Supabase PostgreSQL status
 GET    /healthz/neo4j                 # Neo4j status
-GET    /healthz/postgres              # PostgreSQL status
+GET    /healthz/postgres              # PostgreSQL status (alias)
 ```
 
 ### Example Usage
@@ -176,8 +221,7 @@ curl -X POST "http://localhost:8000/workspaces/{workspace_id}/chat" \
 The system supports multiple external storage options:
 
 - **Neo4j** - Graph relationships and entity storage
-- **ChromaDB** - Vector embeddings and similarity search
-- **PostgreSQL** - Structured data and metadata storage
+- **Supabase PostgreSQL** - Vector embeddings, structured data and metadata storage
 
 ## 🐳 Docker Deployment
 
@@ -196,7 +240,8 @@ docker-compose --profile proxy up -d
 ```
 
 This includes:
-- ChromaDB vector database
+
+- Neo4j graph database (if using Docker)
 - Caddy reverse proxy with automatic HTTPS
 - Persistent data volumes
 
@@ -248,7 +293,7 @@ This project is licensed under the MIT License - see the LICENSE file for detail
 - **LightRAG** - Core RAG framework
 - **RAG-Anything** - Document processing capabilities
 - **FastAPI** - High-performance web framework
-- **ChromaDB** - Vector database solution
+- **Supabase** - PostgreSQL database platform
 - **Neo4j** - Graph database platform
 
 ---

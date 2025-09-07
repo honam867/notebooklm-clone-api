@@ -1,12 +1,11 @@
 """
 Health check endpoints for external storage services.
-Monitors Neo4j, Chroma, and Supabase Postgres connectivity.
+Monitors Neo4j and Supabase Postgres connectivity.
 """
 
 import os
 import asyncio
 from fastapi import APIRouter, HTTPException
-import httpx
 from neo4j import AsyncGraphDatabase
 import asyncpg
 
@@ -30,42 +29,38 @@ async def health_overview():
     """Overall health status of the RAG API with external storage"""
     # Check all external services in parallel
     checks = await asyncio.gather(
-        check_chroma_health(),
         check_neo4j_health(),
         check_postgres_health(),
         return_exceptions=True,
     )
 
-    chroma_ok = not isinstance(checks[0], Exception)
-    neo4j_ok = not isinstance(checks[1], Exception)
-    postgres_ok = not isinstance(checks[2], Exception)
+    neo4j_ok = not isinstance(checks[0], Exception)
+    postgres_ok = not isinstance(checks[1], Exception)
 
-    all_healthy = chroma_ok and neo4j_ok and postgres_ok
+    all_healthy = neo4j_ok and postgres_ok
 
     return {
         "status": "healthy" if all_healthy else "degraded",
         "storage_mode": "external",
         "services": {
-            "chroma": "healthy" if chroma_ok else "unhealthy",
             "neo4j": "healthy" if neo4j_ok else "unhealthy",
-            "postgres": "healthy" if postgres_ok else "unhealthy",
+            "supabase": "healthy" if postgres_ok else "unhealthy",
         },
         "details": {
-            "chroma": str(checks[0]) if isinstance(checks[0], Exception) else "OK",
-            "neo4j": str(checks[1]) if isinstance(checks[1], Exception) else "OK",
-            "postgres": str(checks[2]) if isinstance(checks[2], Exception) else "OK",
+            "neo4j": str(checks[0]) if isinstance(checks[0], Exception) else "OK",
+            "supabase": str(checks[1]) if isinstance(checks[1], Exception) else "OK",
         },
     }
 
 
-@router.get("/chroma")
-async def chroma_health():
-    """Check Chroma vector database health"""
+@router.get("/supabase")
+async def supabase_health():
+    """Check Supabase Postgres health"""
     try:
-        result = await check_chroma_health()
+        result = await check_postgres_health()
         return {"status": "healthy", "details": result}
     except Exception as e:
-        raise HTTPException(503, f"Chroma health check failed: {str(e)}")
+        raise HTTPException(503, f"Supabase health check failed: {str(e)}")
 
 
 @router.get("/neo4j")
@@ -80,7 +75,7 @@ async def neo4j_health():
 
 @router.get("/postgres")
 async def postgres_health():
-    """Check Supabase Postgres health"""
+    """Check Supabase Postgres health (alias for /supabase)"""
     try:
         result = await check_postgres_health()
         return {"status": "healthy", "details": result}
@@ -89,30 +84,6 @@ async def postgres_health():
 
 
 # Internal health check functions
-
-
-async def check_chroma_health() -> dict:
-    """Internal Chroma health check"""
-    chroma_host = os.getenv("CHROMA_HOST")
-    chroma_port = os.getenv("CHROMA_PORT", "8000")
-
-    if not chroma_host:
-        raise Exception("CHROMA_HOST not configured")
-
-    # Build URL based on port (assume HTTPS for 443, HTTP otherwise)
-    protocol = "https" if chroma_port == "443" else "http"
-    url = f"{protocol}://{chroma_host}:{chroma_port}/api/v1/heartbeat"
-
-    async with httpx.AsyncClient(verify=True, timeout=10) as client:
-        response = await client.get(url)
-        response.raise_for_status()
-
-        return {
-            "url": url,
-            "status_code": response.status_code,
-            "response_time_ms": response.elapsed.total_seconds() * 1000,
-            "body": response.text,
-        }
 
 
 async def check_neo4j_health() -> dict:
@@ -154,31 +125,64 @@ async def check_neo4j_health() -> dict:
 
 
 async def check_postgres_health() -> dict:
-    """Internal Postgres health check"""
+    """Internal Supabase Postgres health check using individual environment variables"""
     try:
+        # Get individual connection parameters
+        host = os.getenv("POSTGRES_HOST")
+        port = os.getenv("POSTGRES_PORT", "5432")
+        user = os.getenv("POSTGRES_USER")
+        password = os.getenv("POSTGRES_PASSWORD")
+        database = os.getenv("POSTGRES_DATABASE")
+        max_connections = os.getenv("POSTGRES_MAX_CONNECTIONS", "12")
 
-        postgres_uri = os.getenv("POSTGRES_URI")
-        if not postgres_uri:
-            raise Exception("POSTGRES_URI not configured")
+        print(f"POSTGRES_HOST: {host}")
+        print(f"POSTGRES_PORT: {port}")
+        print(f"POSTGRES_USER: {user}")
+        print(f"POSTGRES_PASSWORD: {'***' if password else None}")
+        print(f"POSTGRES_DATABASE: {database}")
+        print(f"POSTGRES_MAX_CONNECTIONS: {max_connections}")
 
+        # Check for required parameters
+        if not all([host, user, password, database]):
+            missing = []
+            if not host: missing.append("POSTGRES_HOST")
+            if not user: missing.append("POSTGRES_USER")
+            if not password: missing.append("POSTGRES_PASSWORD")
+            if not database: missing.append("POSTGRES_DATABASE")
+            raise Exception(f"Supabase configuration incomplete. Missing: {', '.join(missing)}")
+
+        # Build connection string
+        postgres_uri = f"postgresql://{user}:{password}@{host}:{port}/{database}"
+        
+        # Connect and run health checks
         conn = await asyncpg.connect(postgres_uri)
 
         # Simple health check query
         result = await conn.fetchval("SELECT 1")
         version = await conn.fetchval("SELECT version()")
+        
+        # Check current connections
+        current_connections = await conn.fetchval(
+            "SELECT count(*) FROM pg_stat_activity WHERE state = 'active'"
+        )
 
         await conn.close()
 
         return {
             "connection": "successful",
+            "host": host,
+            "port": int(port),
+            "database": database,
             "health_check_result": result,
             "postgres_version": version.split()[0:2] if version else "unknown",
+            "max_connections": int(max_connections),
+            "current_active_connections": current_connections,
         }
 
     except ImportError:
         raise Exception("asyncpg not installed (pip install asyncpg)")
     except Exception as e:
-        raise Exception(f"Postgres connection failed: {str(e)}")
+        raise Exception(f"Supabase connection failed: {str(e)}")
 
 
 # Add main execution block to run as standalone FastAPI server
@@ -204,7 +208,7 @@ if __name__ == "__main__":
             "message": "LightRAG Health Check API",
             "endpoints": {
                 "health_overview": "/healthz/",
-                "chroma_health": "/healthz/chroma",
+                "supabase_health": "/healthz/supabase",
                 "neo4j_health": "/healthz/neo4j",
                 "postgres_health": "/healthz/postgres",
                 "docs": "/docs",

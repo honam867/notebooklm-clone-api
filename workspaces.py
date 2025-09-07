@@ -234,8 +234,6 @@ async def initialize_workspace_rag(workspace_id: str) -> RAGAnything:
 
     try:
         paths = ensure_workspace_dirs(workspace_id)
-        print("❤️ test", paths["workspace_dir"])
-        # Use new bootstrap helper to create LightRAG instance with external storage
         lightrag_instance = await init_workspace_lightrag(workspace_id)
 
         # Create RAGAnything config
@@ -249,7 +247,7 @@ async def initialize_workspace_rag(workspace_id: str) -> RAGAnything:
         )
 
         # Initialize RAGAnything with the pre-initialized LightRAG instance
-        print(f"✨ Initializing RAGAnything... with config , {config}")
+        print(f"✨ Initializing RAGAnything... with config")
         rag_anything = RAGAnything(
             lightrag=lightrag_instance,
             llm_model_func=llm_model_func,
