@@ -1,0 +1,58 @@
+# Caddyfile for Chroma TLS reverse proxy
+# Replace 'your-domain.com' with your actual domain
+
+your-domain.com {
+    reverse_proxy chroma:8000
+    
+    # Enable compression
+    encode gzip
+    
+    # CORS headers for API access
+    @cors_preflight method OPTIONS
+    handle @cors_preflight {
+        header Access-Control-Allow-Origin "*"
+        header Access-Control-Allow-Methods "GET, POST, PUT, DELETE, OPTIONS"
+        header Access-Control-Allow-Headers "Content-Type, Authorization"
+        header Access-Control-Max-Age "86400"
+        respond "" 204
+    }
+    
+    header {
+        Access-Control-Allow-Origin "*"
+        Access-Control-Allow-Methods "GET, POST, PUT, DELETE, OPTIONS"
+        Access-Control-Allow-Headers "Content-Type, Authorization"
+    }
+    
+    # Rate limiting (adjust as needed)
+    rate_limit {
+        zone static_rl {
+            key {remote_host}
+            events 100
+            window 1m
+        }
+    }
+    
+    # Logging
+    log {
+        output file /var/log/caddy/chroma.log
+        format json
+    }
+}
+
+# Alternative configuration for IP-based access (if no domain)
+# Replace with your VPS IP
+# :443 {
+#     tls internal
+#     reverse_proxy chroma:8000
+#     
+#     @cors_preflight method OPTIONS
+#     handle @cors_preflight {
+#         header Access-Control-Allow-Origin "*"
+#         header Access-Control-Allow-Methods "GET, POST, PUT, DELETE, OPTIONS" 
+#         header Access-Control-Allow-Headers "Content-Type, Authorization"
+#         respond "" 204
+#     }
+#     
+#     header Access-Control-Allow-Origin "*"
+# }
+

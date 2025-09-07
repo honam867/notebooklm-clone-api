@@ -1,0 +1,24 @@
+# Core RAG dependencies
+raganything
+lightrag
+
+# FastAPI and web framework
+fastapi
+uvicorn[standard]
+python-multipart
+httpx
+
+# External storage backends
+neo4j  # Neo4j driver for graph storage
+chromadb  # Chroma vector database client
+asyncpg  # Async PostgreSQL driver for Supabase
+
+# Utilities
+python-dotenv
+pydantic
+
+# File processing (if not already included in raganything)
+# Uncomment as needed based on your parser choice
+# mineru  # Document parsing
+# pymupdf  # PDF processing
+# pillow  # Image processing
