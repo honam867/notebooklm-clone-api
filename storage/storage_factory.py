@@ -54,6 +54,37 @@ def create_llm_model_func():
     return llm_model_func
 
 
+def create_vision_model_func():
+    """Create vision model function for RAGAnything with fallback to LLM"""
+    
+    def vision_model_func(
+        prompt,
+        system_prompt=None,
+        history_messages=[],
+        image_data=None,
+        messages=None,
+        **kwargs,
+    ):
+        # Use vision model for messages with vision capabilities
+        if messages:
+            return openai_complete_if_cache(
+                "gpt-4o",
+                "",
+                system_prompt=None,
+                history_messages=[],
+                messages=messages,
+                api_key=LLM_BINDING_API_KEY,
+                base_url=LLM_BINDING_HOST,
+                **kwargs,
+            )
+
+        # Fallback to regular LLM for text-only queries
+        llm_func = create_llm_model_func()
+        return llm_func(prompt, system_prompt, history_messages, **kwargs)
+
+    return vision_model_func
+
+
 async def build_lightrag(workspace_dir: str, workspace_id: str) -> LightRAG:
     print(
         f"✨ Building LightRAG instance for workspace_dir: {workspace_dir}, workspace_id: {workspace_id}"

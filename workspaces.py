@@ -17,63 +17,24 @@ from app_init.lightrag_boot import (
     ensure_workspace_dirs,
 )
 from storage.delete_strategies import delete_document_everywhere, delete_workspace_data
-from storage.storage_factory import validate_external_storage_config
+from storage.storage_factory import validate_external_storage_config, create_llm_model_func, create_vision_model_func
 from api.health import router as health_router
-from lightrag.llm.openai import openai_complete_if_cache
+
 
 from typing import Dict, Optional
 
 load_dotenv(dotenv_path=".env", override=False)
 
 BASE_WORKSPACES_DIR = os.getenv("WORKSPACES_DIR", "./workspaces")
-API_KEY = os.getenv("LLM_BINDING_API_KEY")
-BASE_URL = os.getenv("LLM_BINDING_HOST")
 
 # Global variables
 workspace_rags: Dict[str, RAGAnything] = {}  # workspace_id -> RAGAnything instance
 workspace_docs: Dict[str, Dict[str, str]] = {}  # workspace_id -> {doc_id: file_path}
 
 
-def llm_model_func(prompt, system_prompt=None, history_messages=[], **kwargs):
-    return openai_complete_if_cache(
-        "gpt-4o-mini",
-        prompt,
-        system_prompt=system_prompt,
-        history_messages=history_messages,
-        api_key=API_KEY,
-        base_url=BASE_URL,
-        **kwargs,
-    )
-
-
-def vision_model_func(
-    prompt,
-    system_prompt=None,
-    history_messages=[],
-    image_data=None,
-    messages=None,
-    **kwargs,
-):
-
-    print("✨ Check promp", prompt)
-
-    if messages:
-        return openai_complete_if_cache(
-            "gpt-4o",
-            "",
-            system_prompt=None,
-            history_messages=[],
-            messages=messages,
-            api_key=API_KEY,
-            base_url=BASE_URL,
-            **kwargs,
-        )
-
-    # Fallback to regular LLM
-    from storage.storage_factory import create_llm_model_func
-
-    llm_func = create_llm_model_func()
-    return llm_func(prompt, system_prompt, history_messages, **kwargs)
+# Create function instances from storage factory
+llm_model_func = create_llm_model_func()
+vision_model_func = create_vision_model_func()
 
 
 def rebuild_workspace_docs_mapping(workspace_id: str):
