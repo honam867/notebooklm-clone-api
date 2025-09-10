@@ -237,9 +237,20 @@ async def initialize_workspace_rag(workspace_id: str) -> RAGAnything:
 
 
 async def startup_initialize():
-    """Initialize system at startup with external storage"""
+    """Initialize system at startup with external storage and database"""
 
-    # Validate external storage configuration
+    # Step 1: Initialize database schema
+    print("🔧 Initializing database...")
+    try:
+        from infra.db_init import initialize_database
+        db_ready = await initialize_database()
+        if not db_ready:
+            print("⚠️  Database initialization incomplete - app will run without database persistence")
+    except Exception as e:
+        print(f"⚠️  Database initialization failed: {e}")
+        print("📝 App will continue without database persistence")
+
+    # Step 2: Validate external storage configuration
     missing_vars = validate_external_storage_config()
     if missing_vars:
         print(
@@ -248,20 +259,39 @@ async def startup_initialize():
         print("💡 Please configure all required environment variables and restart")
         return
 
-    # Initialize RAG for existing workspaces (discover from directory structure)
+    # Step 3: Initialize RAG for existing workspaces (database first, directory fallback)
     initialized_count = 0
-    if os.path.exists(BASE_WORKSPACES_DIR):
-        for workspace_id in os.listdir(BASE_WORKSPACES_DIR):
-            workspace_path = os.path.join(BASE_WORKSPACES_DIR, workspace_id)
-            if os.path.isdir(workspace_path) and len(workspace_id) == 36:  # UUID format
-                try:
-                    await initialize_workspace_rag(workspace_id)
-                    initialized_count += 1
-                except Exception as e:
-                    print(f"Error initializing workspace {workspace_id}: {e}")
+    workspace_ids_to_init = []
+    
+    # Primary: Get workspaces from database
+    try:
+        from repos.workspaces import list_workspaces as db_list_workspaces
+        db_workspaces = db_list_workspaces()
+        workspace_ids_to_init = [ws["id"] for ws in db_workspaces]
+        print(f"📊 Found {len(db_workspaces)} workspaces in database - using database as source")
+        
+    except Exception as e:
+        print(f"⚠️  Database query failed: {e} - falling back to directory discovery")
+        
+        # Fallback: Discover from directory structure only when database fails
+        workspace_ids_to_init = []
+        if os.path.exists(BASE_WORKSPACES_DIR):
+            for workspace_id in os.listdir(BASE_WORKSPACES_DIR):
+                workspace_path = os.path.join(BASE_WORKSPACES_DIR, workspace_id)
+                if os.path.isdir(workspace_path) and len(workspace_id) == 36:  # UUID format
+                    workspace_ids_to_init.append(workspace_id)
+            print(f"📁 Found {len(workspace_ids_to_init)} workspaces from directory structure")
+    
+    # Initialize RAG for discovered workspaces
+    for workspace_id in workspace_ids_to_init:
+        try:
+            await initialize_workspace_rag(workspace_id)
+            initialized_count += 1
+        except Exception as e:
+            print(f"Error initializing workspace {workspace_id}: {e}")
 
     print(
-        f"Startup complete. Initialized {initialized_count} workspaces with external storage."
+        f"🚀 Startup complete. Initialized {initialized_count} workspaces with external storage."
     )
 
 
@@ -354,6 +384,14 @@ async def create_workspace(workspace_data: WorkspaceCreate):
         await initialize_workspace_rag(workspace_id)
         print(f"✅ RAG initialization completed")
 
+        # Save to database after successful RAG initialization
+        try:
+            from repos.workspaces import create_workspace as db_create_workspace
+            db_workspace = db_create_workspace(workspace_data.name, workspace_data.description or "")
+            print(f"💾 Workspace saved to database with ID: {db_workspace['id']}")
+        except Exception as db_error:
+            print(f"⚠️  Database save failed: {db_error} - continuing without database persistence")
+
     except Exception as e:
         print(f"❌ Error during workspace creation: {str(e)}")
         # Clean up on failure
@@ -361,7 +399,7 @@ async def create_workspace(workspace_data: WorkspaceCreate):
             del workspace_docs[workspace_id]
         raise
 
-    # Return workspace info (metadata will be stored in external storage)
+    # Return workspace info
     return {
         "ok": True,
         "workspace": {
@@ -377,31 +415,99 @@ async def create_workspace(workspace_data: WorkspaceCreate):
 
 @app.get("/workspaces")
 async def list_workspaces():
-    """List all active workspaces from memory"""
-    workspaces_list = []
-    for workspace_id in workspace_rags.keys():
-        doc_count = len(workspace_docs.get(workspace_id, {}))
-        workspace_info = {
-            "id": workspace_id,
-            "document_count": doc_count,
-            "storage_mode": "external",
-            "status": "active",
-        }
-        workspaces_list.append(workspace_info)
-
-    return {"workspaces": workspaces_list}
+    """List all workspaces from database and merge with in-memory data"""
+    try:
+        # Get workspaces from database
+        from repos.workspaces import list_workspaces as db_list_workspaces
+        db_workspaces = db_list_workspaces()
+        print(f"📊 Found {len(db_workspaces)} workspaces in database")
+        
+        workspaces_list = []
+        for db_ws in db_workspaces:
+            doc_count = len(workspace_docs.get(db_ws["id"], {}))
+            is_active = db_ws["id"] in workspace_rags
+            
+            workspace_info = {
+                "id": db_ws["id"],
+                "name": db_ws["name"],
+                "description": db_ws["description"],
+                "document_count": doc_count,
+                "storage_mode": "external",
+                "status": "active" if is_active else "inactive",
+                "created_at": db_ws["created_at"],
+                "updated_at": db_ws["updated_at"],
+            }
+            workspaces_list.append(workspace_info)
+        
+        # Also include any in-memory workspaces not in database (fallback)
+        for workspace_id in workspace_rags.keys():
+            if not any(ws["id"] == workspace_id for ws in workspaces_list):
+                doc_count = len(workspace_docs.get(workspace_id, {}))
+                workspace_info = {
+                    "id": workspace_id,
+                    "name": "Unknown",
+                    "description": "In-memory only",
+                    "document_count": doc_count,
+                    "storage_mode": "external",
+                    "status": "active",
+                }
+                workspaces_list.append(workspace_info)
+                
+        return {"workspaces": workspaces_list}
+        
+    except Exception as e:
+        print(f"⚠️  Database query failed: {e} - falling back to memory-only")
+        # Fallback to memory-only approach
+        workspaces_list = []
+        for workspace_id in workspace_rags.keys():
+            doc_count = len(workspace_docs.get(workspace_id, {}))
+            workspace_info = {
+                "id": workspace_id,
+                "document_count": doc_count,
+                "storage_mode": "external",
+                "status": "active",
+            }
+            workspaces_list.append(workspace_info)
+        return {"workspaces": workspaces_list}
 
 
 @app.get("/workspaces/{workspace_id}")
 async def get_workspace(workspace_id: str):
-    """Get workspace details"""
+    """Get workspace details from database and merge with in-memory data"""
+    try:
+        # Try to get from database first
+        from repos.workspaces import get_workspace as db_get_workspace
+        db_workspace = db_get_workspace(workspace_id)
+        
+        if db_workspace:
+            doc_count = len(workspace_docs.get(workspace_id, {}))
+            is_active = workspace_id in workspace_rags
+            
+            workspace_info = {
+                "id": db_workspace["id"],
+                "name": db_workspace["name"],
+                "description": db_workspace["description"],
+                "document_count": doc_count,
+                "storage_mode": "external",
+                "status": "active" if is_active else "inactive",
+                "created_at": db_workspace["created_at"],
+                "updated_at": db_workspace["updated_at"],
+            }
+            return {"workspace": workspace_info}
+        
+    except Exception as e:
+        print(f"⚠️  Database query failed: {e} - checking memory only")
+    
+    # Fallback to memory-only check
     if workspace_id not in workspace_rags:
         raise HTTPException(404, "Workspace not found")
 
     workspace_info = {
         "id": workspace_id,
+        "name": "Unknown",
+        "description": "In-memory only",
         "document_count": len(workspace_docs.get(workspace_id, {})),
-        "storage_mode": "external",
+        "storage_mode": "external", 
         "status": "active",
     }
 
@@ -410,7 +516,7 @@ async def get_workspace(workspace_id: str):
 
 @app.delete("/workspaces/{workspace_id}")
 async def delete_workspace(workspace_id: str):
-    """Delete entire workspace from external storage and memory"""
+    """Delete entire workspace from external storage, memory, and database"""
     if workspace_id not in workspace_rags:
         raise HTTPException(404, "Workspace not found")
 
@@ -429,6 +535,17 @@ async def delete_workspace(workspace_id: str):
         paths = ensure_workspace_dirs(workspace_id)
         if os.path.exists(paths["workspace_dir"]):
             shutil.rmtree(paths["workspace_dir"])
+
+        # Delete from database
+        try:
+            from repos.workspaces import delete_workspace as db_delete_workspace
+            db_deleted = db_delete_workspace(workspace_id)
+            if db_deleted:
+                print(f"💾 Workspace {workspace_id} deleted from database")
+            else:
+                print(f"⚠️  Workspace {workspace_id} not found in database")
+        except Exception as db_error:
+            print(f"⚠️  Database deletion failed: {db_error} - continuing")
 
         return {"ok": True, "message": f"Workspace {workspace_id} deleted successfully"}
 

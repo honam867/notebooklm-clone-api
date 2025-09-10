@@ -4,6 +4,7 @@ Monitors Neo4j and Supabase Postgres connectivity.
 """
 
 import os
+import sys
 import asyncio
 from fastapi import APIRouter, HTTPException
 from neo4j import AsyncGraphDatabase
@@ -18,6 +19,16 @@ except ImportError:
     print("⚠️  python-dotenv not installed. Environment variables from system only.")
     pass
 
+# Setup project path for imports - DO THIS ONCE AT MODULE LEVEL
+def setup_project_imports():
+    """Add project root to Python path for infra module imports"""
+    project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    if project_root not in sys.path:
+        sys.path.insert(0, project_root)
+
+# Call setup once when module loads
+setup_project_imports()
+
 
 # All imports for external storage health checks
 
@@ -26,18 +37,20 @@ router = APIRouter(prefix="/healthz", tags=["health"])
 
 @router.get("/")
 async def health_overview():
-    """Overall health status of the RAG API with external storage"""
-    # Check all external services in parallel
+    """Overall health status of the RAG API with external storage and database schema"""
+    # Check all external services and database schema in parallel
     checks = await asyncio.gather(
         check_neo4j_health(),
         check_postgres_health(),
+        check_database_schema(),
         return_exceptions=True,
     )
 
     neo4j_ok = not isinstance(checks[0], Exception)
     postgres_ok = not isinstance(checks[1], Exception)
+    schema_ok = not isinstance(checks[2], Exception)
 
-    all_healthy = neo4j_ok and postgres_ok
+    all_healthy = neo4j_ok and postgres_ok and schema_ok
 
     return {
         "status": "healthy" if all_healthy else "degraded",
@@ -45,11 +58,19 @@ async def health_overview():
         "services": {
             "neo4j": "healthy" if neo4j_ok else "unhealthy",
             "supabase": "healthy" if postgres_ok else "unhealthy",
+            "database_schema": "healthy" if schema_ok else "unhealthy",
         },
         "details": {
             "neo4j": str(checks[0]) if isinstance(checks[0], Exception) else "OK",
-            "supabase": str(checks[1]) if isinstance(checks[1], Exception) else "OK",
+            "supabase": str(checks[1]) if isinstance(checks[1], Exception) else "OK", 
+            "database_schema": str(checks[2]) if isinstance(checks[2], Exception) else "OK",
         },
+        "endpoints": {
+            "database_init": "/healthz/database-init",
+            "workspaces_table": "/healthz/workspaces-table",
+            "postgres": "/healthz/postgres",
+            "neo4j": "/healthz/neo4j",
+        }
     }
 
 
@@ -81,6 +102,59 @@ async def postgres_health():
         return {"status": "healthy", "details": result}
     except Exception as e:
         raise HTTPException(503, f"Postgres health check failed: {str(e)}")
+
+
+@router.get("/database-init")
+async def database_init_health():
+    """Check database schema initialization status"""
+    try:
+        from infra.db_init import initialize_database
+        
+        print("🔍 Running database initialization health check...")
+        db_ready = await initialize_database()
+        
+        if db_ready:
+            return {
+                "status": "healthy",
+                "schema_status": "initialized",
+                "message": "Database schema is properly initialized"
+            }
+        else:
+            return {
+                "status": "degraded", 
+                "schema_status": "missing",
+                "message": "Database schema initialization failed",
+                "action_required": "Check database connection and credentials"
+            }
+            
+    except Exception as e:
+        raise HTTPException(503, f"Database initialization check failed: {str(e)}")
+
+
+@router.get("/workspaces-table")
+async def workspaces_table_health():
+    """Check if workspaces table exists and is accessible"""
+    try:
+        from infra.supabase_client import get_sb
+        
+        sb = get_sb()
+        
+        # Try to query the workspaces table
+        result = sb.table("workspaces").select("id").limit(1).execute()
+        
+        # Count total workspaces
+        count_result = sb.table("workspaces").select("id", count="exact").execute()
+        total_workspaces = count_result.count or 0
+        
+        return {
+            "status": "healthy",
+            "table_status": "accessible",
+            "total_workspaces": total_workspaces,
+            "message": "Workspaces table is accessible via Supabase client"
+        }
+        
+    except Exception as e:
+        raise HTTPException(503, f"Workspaces table check failed: {str(e)}")
 
 
 # Internal health check functions
@@ -122,6 +196,30 @@ async def check_neo4j_health() -> dict:
         raise Exception("neo4j driver not installed (pip install neo4j)")
     except Exception as e:
         raise Exception(f"Neo4j connection failed: {str(e)}")
+
+
+async def check_database_schema() -> dict:
+    """Internal database schema health check"""
+    try:
+        from infra.supabase_client import get_sb
+        
+        sb = get_sb()
+        
+        # Try to query the workspaces table to check if schema exists
+        result = sb.table("workspaces").select("id").limit(1).execute()
+        
+        # Count total workspaces
+        count_result = sb.table("workspaces").select("id", count="exact").execute()
+        total_workspaces = count_result.count or 0
+        
+        return {
+            "schema_status": "initialized",
+            "workspaces_table": "accessible",
+            "total_workspaces": total_workspaces,
+        }
+        
+    except Exception as e:
+        raise Exception(f"Database schema check failed: {str(e)}")
 
 
 async def check_postgres_health() -> dict:
