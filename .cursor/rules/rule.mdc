@@ -1,0 +1,9 @@
+---
+description:
+globs:
+alwaysApply: true
+---
+- Do not auto install python library
+- Do not create new test file
+- Avoid code duplication: If the same code block appears in multiple functions, move it to module level or create a reusable helper function
+- For import path setup or sys.path modifications, do it once at the top of the file, not in individual functions

@@ -13,6 +13,10 @@ neo4j  # Neo4j driver for graph storage
 chromadb  # Chroma vector database client
 asyncpg  # Async PostgreSQL driver for Supabase
 
+# Supabase integration
+supabase  # Supabase Python client
+psycopg2-binary  # PostgreSQL adapter for direct DB access
+
 # Utilities
 python-dotenv
 pydantic
